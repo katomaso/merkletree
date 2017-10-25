@@ -1,55 +1,91 @@
-package main
+/*
+merkletree package provides effective parallel implementation of MerkleTree.
+
+One can exchange underlaying hashing algorithm. MerkleTree uses SHA1 by default
+to be compatible with BitTorrent protocol. The hash can be of course exchanged
+for SHA256 for compatibility with BitCoin or any other hash registered in Go's
+own crypt.Hash.
+*/
+
+package merkletree
 
 import (
+	"crypto"
 	"fmt"
-	"log"
-	"crypto/sha1"
-	"os"
+	"github.com/katomaso/merkletree/hash"
+	"hash"
 	"io"
+	"log"
+	"os"
 )
 
-const branching_factor = 2
-const tree_height = 40
+const Size = 32
 
-type Block []byte
+var (
+	TreeHeight  uint = 40
+	DefaultHash      = crypto.SHA1
+	marker           = make([]byte, 0)
+)
 
-
-func main() {
-	if len(os.Args) != 2 {
-		log.Fatalf("Usage: %s <filename>", os.Args[0])
-	}
-	filename := os.Args[1]
-
-	file, err := os.Open(filename)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
-
-	result := Hash(file)
-	fmt.Println(result)
+type MerkleTree struct {
+	// crypto.Hash to be used as underlaying hash for data blocks
+	Hash crypto.Hash
+	// input channel expect to receive already hashed
+	input, output chan []byte
+	// cache for data written by Writer interface smaller than minimal block
+	// sending `marker` or nil will clear cache and force computation with it
+	cache []byte
 }
 
-
-func Hash(reader io.Reader) []byte {
-	block := make([]byte, 32)
-	input_chan := make(chan block)  // channel at the bottom of the tree
+func (tree *MerkleTree) New() hash.Hash {
+	block := make([]byte, Size)
+	// channel at the bottom of the tree used to input hashed data blocks
+	input_chan := make(chan Block)
+	// the only reference to middle_hash is within matching goroutine
 	middle_chan = input_chan
-	output_chan := make(chan block)  // (future) tree root channel
+	// by redefining this will become the root (output) channel of a tree
+	output_chan := make(chan Block)
 
 	for i := 0; i < tree_height; i++ {
 		go hashPartial(middle_chan, output_chan)
 		middle_chan = output_chan
 		output_chan := make(chan block)
 	}
-	// output channel is now the last - tree root channel
-	hash_reader = sha1.Reader(reader)
-	for _, err := hash_reader.Read(block); err == nil; _, err = hash_reader.Read(block) {
-		input_chan <- block
-	}
-	input_chan <- nil // signal end of computation by nil value
 
-	return <- output_chan
+	return MerkleTree{DefaultHash, input_chan, output_chan}
+}
+
+func (tree *MerkleTree) Write(data []byte) (n int, err error) {
+	hasher = tree.Hash.New()
+	i := 0
+
+	if len(tree.cache) > 0 {
+		hasher.Write(tree.cache)
+		i = -len(tree.cache)
+		tree.cache.clear()
+	}
+
+	for ; i < len(data); i += Size {
+		hasher.Write(data[min(0, i) : i+Size])
+		tree.input <- hasher.Sum(nil)
+		hasher.Reset()
+	}
+
+	if i < len(data) {
+		Copy(data[i:], tree.cache)
+	}
+}
+
+// Sum appends hash of underlaying data into b and returns the hash as well
+func (tree *MerkleTree) Sum(b []byte) []byte {
+	input_chan <- make([]byte, 0) // end empty data to provoke hash propagation
+	hash <- output_chan
+}
+
+// Sending nil through tree will terminate all running goroutines
+func (tree *MerkleTree) Close() {
+	tree.input <- nil
+	_ <- tree.output
 }
 
 /** computePartial waits for data in `branching_factor` cycles and sends their
@@ -60,7 +96,7 @@ func computePartial(input chan block, output chan block) {
 	for i := 0; i < branching_factor; i++ {
 
 		if block <- channels[level]; block == nil {
-			break;
+			break
 		}
 	}
 
