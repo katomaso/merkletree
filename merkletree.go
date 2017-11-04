@@ -11,99 +11,137 @@ package merkletree
 
 import (
 	"crypto"
-	"fmt"
-	"github.com/katomaso/merkletree/hash"
 	"hash"
-	"io"
-	"log"
-	"os"
 )
 
-const Size = 32
+const BlockSize = 32
 
 var (
-	TreeHeight  uint = 40
-	DefaultHash      = crypto.SHA1
-	marker           = make([]byte, 0)
+	TreeHeight      = 40
+	DefaultHash     = crypto.SHA1
+	BranchingFactor = 2
+	marker          = make([]byte, 0)
 )
 
+type Block []byte
+
 type MerkleTree struct {
-	// crypto.Hash to be used as underlaying hash for data blocks
-	Hash crypto.Hash
 	// input channel expect to receive already hashed
-	input, output chan []byte
-	// cache for data written by Writer interface smaller than minimal block
-	// sending `marker` or nil will clear cache and force computation with it
-	cache []byte
+	channels []chan Block
+	// crypto.Hash to be used as underlaying hash for data blocks
+	hash crypto.Hash
+	// cached holds number of bytes already in hasher (less than BlockSize)
+	cached int
 }
 
-func (tree *MerkleTree) New() hash.Hash {
-	block := make([]byte, Size)
+func (MerkleTree) New() hash.Hash {
 	// channel at the bottom of the tree used to input hashed data blocks
-	input_chan := make(chan Block)
-	// the only reference to middle_hash is within matching goroutine
-	middle_chan = input_chan
-	// by redefining this will become the root (output) channel of a tree
-	output_chan := make(chan Block)
-
-	for i := 0; i < tree_height; i++ {
-		go hashPartial(middle_chan, output_chan)
-		middle_chan = output_chan
-		output_chan := make(chan block)
+	channels := make([]chan Block, TreeHeight)
+	for i, _ := range channels {
+		channels[i] = make(chan Block)
 	}
-
-	return MerkleTree{DefaultHash, input_chan, output_chan}
+	tree := MerkleTree{channels, DefaultHash, 0}
+	tree.Start()
+	return tree
 }
 
-func (tree *MerkleTree) Write(data []byte) (n int, err error) {
-	hasher = tree.Hash.New()
-	i := 0
+func (tree *MerkleTree) Start() {
+	for i := 0; i < TreeHeight-1; i++ {
+		go tree.compute(tree.channels[i], tree.channels[i+1])
+	}
+}
 
-	if len(tree.cache) > 0 {
-		hasher.Write(tree.cache)
-		i = -len(tree.cache)
-		tree.cache.clear()
+func (tree MerkleTree) Write(data []byte) (n int, err error) {
+	var (
+		i      int = 0
+		hasher     = tree.hash.New()
+	)
+
+	if tree.cached > 0 {
+		i = -tree.cached
+		tree.cached = 0
 	}
 
-	for ; i < len(data); i += Size {
-		hasher.Write(data[min(0, i) : i+Size])
-		tree.input <- hasher.Sum(nil)
+	for ; i < len(data); i += BlockSize {
+		hasher.Write(data[max(0, i):min(len(data), i+BlockSize)])
+		tree.channels[0] <- hasher.Sum(nil)
 		hasher.Reset()
 	}
+	i -= BlockSize
 
 	if i < len(data) {
-		Copy(data[i:], tree.cache)
+		hasher.Write(data[i:])
+		tree.cached = len(data) - i
 	}
+
+	return i, nil
 }
 
 // Sum appends hash of underlaying data into b and returns the hash as well
-func (tree *MerkleTree) Sum(b []byte) []byte {
-	input_chan <- make([]byte, 0) // end empty data to provoke hash propagation
-	hash <- output_chan
+func (tree MerkleTree) Sum(b []byte) []byte {
+	tree.Write(marker)         // ensure emptying cache
+	tree.channels[0] <- marker // send 'marker' to provoke hash propagation
+	return <-tree.channels[TreeHeight-1]
+}
+
+func (tree MerkleTree) Reset() {
+	tree.Close()
+	tree.Start()
 }
 
 // Sending nil through tree will terminate all running goroutines
 func (tree *MerkleTree) Close() {
-	tree.input <- nil
-	_ <- tree.output
+	tree.channels[0] <- nil
+	<-tree.channels[TreeHeight-1]
+}
+
+func (tree MerkleTree) Size() int {
+	return tree.hash.Size()
+}
+
+func (tree MerkleTree) BlockSize() int {
+	return BlockSize
 }
 
 /** computePartial waits for data in `branching_factor` cycles and sends their
 hash upwards in `output` channel. When nil is received the goroutine quits but
 if it received some data together with the nil then it sends those data upwards.
 **/
-func computePartial(input chan block, output chan block) {
-	for i := 0; i < branching_factor; i++ {
+func (tree *MerkleTree) compute(input, output chan Block) {
+	var hasher hash.Hash = tree.hash.New()
 
-		if block <- channels[level]; block == nil {
-			break
+Always:
+	for {
+		for i := 0; i < BranchingFactor; i++ {
+			block := <-input
+
+			switch {
+			case block == nil:
+				break Always
+			case len(block) == 0:
+				break
+			default:
+				if i == 0 {
+					hasher.Reset()
+				}
+				hasher.Write(block)
+			}
 		}
+		output <- hasher.Sum(nil)
 	}
+	output <- hasher.Sum(nil)
+}
 
-	if has_data {
-		if block == nil {
-			upper_channel <- hash
-		}
+func min(a, b int) int {
+	if a < b {
+		return a
 	}
+	return b
+}
 
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
