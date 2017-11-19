@@ -20,9 +20,8 @@ func main() {
 	}
 	defer file.Close()
 
-	tree = merkletree.New()
-	defer tree.Close()
+	tree := merkletree.New()
 
-	io.Copy(file, tree)
+	io.Copy(tree, file)
 	fmt.Println(tree.Sum(nil))
 }

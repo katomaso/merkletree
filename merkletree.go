@@ -34,7 +34,7 @@ type MerkleTree struct {
 	cached int
 }
 
-func (MerkleTree) New() hash.Hash {
+func New() hash.Hash {
 	// channel at the bottom of the tree used to input hashed data blocks
 	channels := make([]chan Block, TreeHeight)
 	for i, _ := range channels {
