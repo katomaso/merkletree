@@ -11,6 +11,9 @@ package merkletree
 
 import (
 	"crypto"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
 	"hash"
 )
 
@@ -21,6 +24,9 @@ var (
 	DefaultHash     = crypto.SHA1
 	BranchingFactor = 2
 	marker          = make([]byte, 0)
+	_               = sha1.Size
+	_               = sha256.Size
+	_               = sha512.Size
 )
 
 type Block []byte
