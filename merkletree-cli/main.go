@@ -21,7 +21,8 @@ func main() {
 	defer file.Close()
 
 	tree := merkletree.New()
-
+	log.Println("Calling Copy")
 	io.Copy(tree, file)
+	log.Println("Calling Sum")
 	fmt.Println(tree.Sum(nil))
 }
